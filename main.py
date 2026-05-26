@@ -36,7 +36,12 @@ app = FastAPI(
 # ── CORS ───────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins_list + ["*"],
+    allow_origins=settings.allowed_origins_list + [
+        "https://ponpon.vercel.app",          # ← replace with your real Vercel URL
+        "http://localhost:5500",               # local dev (Live Server)
+        "http://127.0.0.1:5500",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
