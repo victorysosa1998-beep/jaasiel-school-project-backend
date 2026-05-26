@@ -280,7 +280,8 @@ def seed():
         print("🌱 Seeding Jaasiel RMS database...")
 
         # ── Super Admin ───────────────────────────────────────────
-        if not db.query(User).filter(User.username == "superadmin").first():
+        existing_admin = db.query(User).filter(User.username == "superadmin").first()
+        if not existing_admin:
             db.add(User(
                 full_name="Super Administrator",
                 username="superadmin",
@@ -292,10 +293,12 @@ def seed():
             ))
             print("  ✅ Super Admin created — username: superadmin / password: Admin@123")
         else:
-            print("  ℹ️  Super Admin already exists")
+            existing_admin.password_hash = hash_password("Admin@123")
+            print("  ✅ Super Admin password reset")
 
         # ── Sub Admin ─────────────────────────────────────────────
-        if not db.query(User).filter(User.username == "subadmin").first():
+        existing_sub = db.query(User).filter(User.username == "subadmin").first()
+        if not existing_sub:
             db.add(User(
                 full_name="Sub Administrator",
                 username="subadmin",
@@ -307,7 +310,8 @@ def seed():
             ))
             print("  ✅ Sub Admin created — username: subadmin / password: SubAdmin@123")
         else:
-            print("  ℹ️  Sub Admin already exists")
+            existing_sub.password_hash = hash_password("SubAdmin@123")
+            print("  ✅ Sub Admin password reset")
 
         db.flush()
 
