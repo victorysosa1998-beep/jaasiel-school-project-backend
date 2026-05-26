@@ -36,12 +36,7 @@ app = FastAPI(
 # ── CORS ───────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins_list + [
-        "https://jassielfull-hpv34.vercel.app",          # ← replace with your real Vercel URL
-        "http://localhost:5500",               # local dev (Live Server)
-        "http://127.0.0.1:5500",
-        "http://localhost:8000",
-    ],
+    allow_origins=settings.allowed_origins_list + ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +87,14 @@ else:
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "Jaasiel RMS API", "version": "3.0.0"}
+
+
+@app.get("/api/debug-cors")
+def debug_cors():
+    return {
+        "allowed_origins": settings.allowed_origins_list,
+        "env_value": os.getenv("ALLOWED_ORIGINS", "NOT SET")
+    }
 
 
 if __name__ == "__main__":
