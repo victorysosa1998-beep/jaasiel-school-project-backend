@@ -57,7 +57,7 @@ def _next_student_seq(db: Session) -> int:
 
 @router.get("")
 def list_students(
-    page: int = Query(1, ge=1), per_page: int = Query(20, le=100),
+    page: int = Query(1, ge=1), per_page: int = Query(20, le=2000),
     search: Optional[str] = None, class_name: Optional[str] = None,
     gender: Optional[str] = None,
     db: Session = Depends(get_db), current_user: User = Depends(require_staff),

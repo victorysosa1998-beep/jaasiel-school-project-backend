@@ -923,16 +923,47 @@ def subadmin_uploads(page: int = 1, per_page: int = 15,
 # HELPER — recalculate class positions
 # ─────────────────────────────────────────────────────────────
 def _recalculate_positions(class_id: int, term_id: int, db: Session):
+    """
+    Recalculate class positions based on student averages.
+
+    Position rules:
+    - Creche, Nursery, Primary, Basic, JSS1–JSS3 → position calculated & stored.
+    - SS1, SS2, SS3 → position stays NULL (not displayed on report card).
+    """
+    import re as _re
     from collections import defaultdict
+
+    # Determine if this class should have positions
+    cls_obj = db.query(Class).filter(Class.id == class_id).first()
+    cls_name = (cls_obj.name or "").strip().upper() if cls_obj else ""
+    is_senior_secondary = bool(_re.match(r"^SS\s*[123]$", cls_name))
+
     results = db.query(Result).filter(
         Result.class_id == class_id,
         Result.term_id  == term_id,
         Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
     ).all()
+
+    if is_senior_secondary:
+        # SS1–SS3: clear any previously stored position — must be blank
+        for r in results:
+            r.position = None
+        return
+
+    # All other classes: rank by average (Jaasiel formula: total / scored subjects)
+    from app.utils.grading import compute_subject_total
     student_totals = defaultdict(list)
     for r in results:
-        student_totals[r.student_id].append(r.total_score or 0)
-    avgs = {sid: sum(ts)/len(ts) for sid, ts in student_totals.items()}
+        t = compute_subject_total(r.first_test, r.second_test, r.ca_score, r.exam_score, r.total_score)
+        if t is not None:
+            student_totals[r.student_id].append(t)
+
+    # Average = sum of scored subject totals / number of scored subjects
+    avgs = {
+        sid: sum(ts) / len(ts)
+        for sid, ts in student_totals.items()
+        if ts
+    }
     ranked = sorted(avgs.keys(), key=lambda s: avgs[s], reverse=True)
     for pos, sid in enumerate(ranked, 1):
         for r in results:

@@ -10,12 +10,12 @@ Scoring rules (from Individual Student Assessment Form):
                    NOT (Total ÷ Max Obtainable) × 100
 
 Grading scale (from report card keys):
-  80–100 = A+   Excellent
-  70–79  = A    Credit
-  60–69  = B    Very Good
+  70–100 = A    Distinction
+  60–69  = B    Credit
   50–59  = C    Good
-  40–49  = D    Fair
-   0–39  = E    Fail
+  45–49  = D    Fair
+  40–44  = E    Pass
+   0–39  = F    Fail
 """
 
 
@@ -27,12 +27,13 @@ def calculate_grade(score: float | None) -> tuple[str, str]:
     if score is None:
         return "—", "—"
     s = float(score)
-    if s >= 80: return "A+", "Excellent"
-    if s >= 70: return "A",  "Credit"
-    if s >= 60: return "B",  "Very Good"
-    if s >= 50: return "C",  "Good"
-    if s >= 40: return "D",  "Fair"
-    return "E", "Fail"
+    if s == 100: return "A+", "Distinction"
+    if s >= 70:  return "A",  "Distinction"
+    if s >= 60:  return "B",  "Credit"
+    if s >= 50:  return "C",  "Good"
+    if s >= 45:  return "D",  "Fair"
+    if s >= 40:  return "E",  "Pass"
+    return "F", "Fail"
 
 
 def compute_subject_total(
