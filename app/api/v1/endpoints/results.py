@@ -31,7 +31,9 @@ class ScoreItem(BaseModel):
     exam_score:     Optional[float] = None
     total_score:    Optional[float] = None
     teacher_comment:Optional[str]   = None
-    attendance:     Optional[int]   = None
+    attendance:     Optional[int]   = None   # days school opened
+    days_present:   Optional[int]   = None   # days student was present
+    days_absent:    Optional[int]   = None   # days student was absent
 
 class UploadRequest(BaseModel):
     class_name:  Optional[str] = None
@@ -96,6 +98,8 @@ def _batch_out(b: ResultBatch, include_results: bool = False) -> dict:
             "teacher_comment": r.teacher_comment,
             "admin_comment":   r.admin_comment,
             "attendance":      r.attendance,
+            "days_present":    r.days_present,
+            "days_absent":     r.days_absent,
             "status":      r.status.value,
         } for r in results]
     return out
@@ -231,6 +235,8 @@ def upload_results(body: UploadRequest,
             existing.status=ResultStatus.pending
             if sc.teacher_comment is not None: existing.teacher_comment=sc.teacher_comment
             if sc.attendance is not None: existing.attendance=sc.attendance
+            if sc.days_present is not None: existing.days_present=sc.days_present
+            if sc.days_absent  is not None: existing.days_absent=sc.days_absent
         else:
             db.add(Result(
                 student_id=student.id, class_id=cls.id,
@@ -241,6 +247,8 @@ def upload_results(body: UploadRequest,
                 grade=g, remark=r, status=ResultStatus.pending,
                 teacher_comment=sc.teacher_comment,
                 attendance=sc.attendance,
+                days_present=sc.days_present,
+                days_absent=sc.days_absent,
             ))
         created += 1
 

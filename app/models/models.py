@@ -237,7 +237,9 @@ class Result(Base):
     position    = Column(Integer, nullable=True)
     teacher_comment = Column(Text, nullable=True)  # class teacher's remark per student
     admin_comment   = Column(Text, nullable=True)  # sub-admin/admin comment on teacher's remark
-    attendance      = Column(Integer, nullable=True)  # times school opened
+    attendance      = Column(Integer, nullable=True)  # days school opened (total)
+    days_present    = Column(Integer, nullable=True)  # days the student was present
+    days_absent     = Column(Integer, nullable=True)  # days the student was absent
 
     status      = Column(SAEnum(ResultStatus), default=ResultStatus.pending, nullable=False, index=True)
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

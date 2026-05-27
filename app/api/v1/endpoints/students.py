@@ -204,6 +204,8 @@ def student_my_results(
             "teacher_comment": r.teacher_comment,
             "admin_comment":   r.admin_comment,
             "attendance":      r.attendance,
+            "days_present":    r.days_present if hasattr(r, "days_present") else None,
+            "days_absent":     r.days_absent  if hasattr(r, "days_absent")  else None,
             "term_name":    r.term.term_name if r.term else None,
             "session_name": r.session.session_name if r.session else None,
             "term_id":      r.term_id,

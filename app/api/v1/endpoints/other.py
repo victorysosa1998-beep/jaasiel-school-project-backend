@@ -60,8 +60,11 @@ def subadmin_dashboard(db: Session = Depends(get_db), current_user: User = Depen
     corrections = [b for b in my_batches if b.status == ResultStatus.correction_requested]
     return {
         "total_uploads":   len(my_batches),
-        "pending":         sum(1 for b in my_batches if b.status == ResultStatus.pending),
-        "approved":        sum(1 for b in my_batches if b.status == ResultStatus.approved),
+        # "Pending Review" = batches submitted to admin but not yet approved
+        "pending":         sum(1 for b in my_batches if b.status == ResultStatus.submitted),
+        # "Approved" = batches approved OR published OR locked (all positive outcomes)
+        "approved":        sum(1 for b in my_batches if b.status in [
+                               ResultStatus.approved, ResultStatus.published, ResultStatus.locked]),
         "corrections":     len(corrections),
         "recent_uploads": [{
             "id": b.id, "class_name": b.class_.name if b.class_ else "—",

@@ -150,3 +150,111 @@ def student_change_password(
         return {"message": "Password updated successfully"}
     else:
         raise HTTPException(403, "Use /auth/change-password for staff accounts")
+
+
+# ══════════════════════════════════════════════════════════════
+# PASSWORD RESET  (public — no token required)
+#
+# Students:
+#   Verify: username + full_name + birth_year + birth_month
+#   Reset to: DDMMYY  (same as generate_default_password in grading.py)
+#   e.g. born 15 March 2005 → password = "150305"
+#
+# Staff (admin / sub-admin):
+#   No date_of_birth stored → verify full_name + school PIN
+#   Reset to: their username
+#   School PIN is set via Railway env var SCHOOL_RESET_PIN
+#   (default: JaasielRMS if env var not set)
+# ══════════════════════════════════════════════════════════════
+
+import os
+from app.utils.grading import generate_default_password
+
+class ResetPasswordRequest(BaseModel):
+    username:    str
+    full_name:   str
+    birth_year:  Optional[int] = None   # students only
+    birth_month: Optional[int] = None   # students only (1–12)
+    school_pin:  Optional[str] = None   # staff only
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Public endpoint — no JWT needed.
+    Verifies identity then resets to the original default password.
+    """
+    username  = body.username.strip().lower()
+    full_name = body.full_name.strip()
+
+    # ── Try student first ──────────────────────────────────────
+    student = db.query(Student).filter(
+        Student.username == username,
+        Student.is_active == True
+    ).first()
+
+    if student:
+        # Verify full name (case-insensitive)
+        if student.full_name.strip().lower() != full_name.lower():
+            raise HTTPException(400, "Details do not match our records")
+
+        # Birth year + month are required for students
+        if body.birth_year is None or body.birth_month is None:
+            raise HTTPException(400, "Birth year and month are required for student accounts")
+
+        if student.date_of_birth is None:
+            raise HTTPException(400, "Date of birth not recorded for this account. Please contact admin.")
+
+        dob = student.date_of_birth
+        if dob.year != body.birth_year or dob.month != body.birth_month:
+            raise HTTPException(400, "Details do not match our records")
+
+        # Reset to DDMMYY — same function used at registration (grading.py)
+        new_password = generate_default_password(dob)
+        student.password_hash  = hash_password(new_password)
+        student.must_change_pwd = True   # prompt to change on next login
+        db.add(AuditLog(
+            action="password_reset",
+            entity_type="student",
+            entity_id=student.id,
+            description=f"Self-service password reset for student {student.username}"
+        ))
+        db.commit()
+        return {
+            "message": "Password reset successful. Your new password is your date of birth (DDMMYY).",
+            "role": "student",
+            "hint": f"{dob.day:02d}{dob.month:02d}{str(dob.year)[-2:]}"   # show them the password
+        }
+
+    # ── Try staff (admin / sub-admin) ─────────────────────────
+    staff = (
+        db.query(User).filter(User.username == username, User.is_active == True).first()
+        or db.query(User).filter(User.email == username, User.is_active == True).first()
+    )
+
+    if staff:
+        if staff.full_name.strip().lower() != full_name.lower():
+            raise HTTPException(400, "Details do not match our records")
+
+        school_pin = os.environ.get("SCHOOL_RESET_PIN", "JaasielRMS")
+        if not body.school_pin or body.school_pin.strip() != school_pin:
+            raise HTTPException(400, "Incorrect school PIN")
+
+        # Staff reset to their username (no DOB available)
+        new_password = staff.username
+        staff.password_hash = hash_password(new_password)
+        db.add(AuditLog(
+            user_id=staff.id,
+            user_name=staff.full_name,
+            user_role=staff.role.value,
+            action="password_reset",
+            description=f"Self-service password reset for staff {staff.username}"
+        ))
+        db.commit()
+        return {
+            "message": "Password reset successful. Your new password is your username.",
+            "role": staff.role.value,
+            "hint": staff.username
+        }
+
+    raise HTTPException(404, "No active account found with that username")
