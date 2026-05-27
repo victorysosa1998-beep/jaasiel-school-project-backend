@@ -3,7 +3,7 @@ import os, uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional, List
 from app.db.base import get_db
@@ -95,12 +95,24 @@ def student_my_results(
     db: Session = Depends(get_db),
 ):
     s = _get_student_user(credentials, db)
-    q = db.query(Result).filter(
-        Result.student_id == s.id,
-        Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
+
+    # FIX: eager-load all relationships accessed later to avoid lazy-load crashes
+    q = (
+        db.query(Result)
+        .options(
+            joinedload(Result.subject),
+            joinedload(Result.session),
+            joinedload(Result.term),
+        )
+        .filter(
+            Result.student_id == s.id,
+            Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
+        )
     )
-    if session_id: q = q.filter(Result.session_id == session_id)
-    if term_id:    q = q.filter(Result.term_id == term_id)
+    if session_id:
+        q = q.filter(Result.session_id == session_id)
+    if term_id:
+        q = q.filter(Result.term_id == term_id)
     results = q.all()
 
     # calculate position using Jaasiel scoring formula
@@ -117,11 +129,21 @@ def student_my_results(
         avg = overall_total / scored_count if scored_count else 0
         term_ids = list({r.term_id for r in results})
         if term_ids:
-            all_results = db.query(Result).filter(
-                Result.class_id == results[0].class_id,
-                Result.term_id.in_(term_ids),
-                Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
-            ).all()
+            # FIX: eager-load subject/session/term for the class-wide query too
+            all_results = (
+                db.query(Result)
+                .options(
+                    joinedload(Result.subject),
+                    joinedload(Result.session),
+                    joinedload(Result.term),
+                )
+                .filter(
+                    Result.class_id == results[0].class_id,
+                    Result.term_id.in_(term_ids),
+                    Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
+                )
+                .all()
+            )
             from collections import defaultdict
             # Group by student, compute average using Jaasiel formula per student
             student_result_map = defaultdict(list)
@@ -219,27 +241,41 @@ def student_my_sessions(
     db: Session = Depends(get_db),
 ):
     """Return all sessions/terms that have published results for this student."""
-    s = _get_student_user(credentials, db)
     from app.models.models import Session as AcSession, Term as TermModel
-    results = db.query(Result).filter(
-        Result.student_id == s.id,
-        Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
-    ).all()
+
+    s = _get_student_user(credentials, db)
+
+    # FIX: eager-load session and term in a single query — eliminates N+1 and the crash
+    results = (
+        db.query(Result)
+        .options(
+            joinedload(Result.session),
+            joinedload(Result.term),
+        )
+        .filter(
+            Result.student_id == s.id,
+            Result.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
+        )
+        .all()
+    )
+
     seen = {}
     for r in results:
-        if r.session_id not in seen:
-            sess = db.query(AcSession).filter(AcSession.id == r.session_id).first()
-            if sess:
-                seen[r.session_id] = {
-                    "id": sess.id, "session_name": sess.session_name, "is_current": sess.is_current,
-                    "terms": []
-                }
-        if r.session_id in seen:
-            term = db.query(TermModel).filter(TermModel.id == r.term_id).first()
-            if term and not any(t["id"] == term.id for t in seen[r.session_id]["terms"]):
+        if r.session_id not in seen and r.session:
+            seen[r.session_id] = {
+                "id": r.session.id,
+                "session_name": r.session.session_name,
+                "is_current": r.session.is_current,
+                "terms": []
+            }
+        if r.session_id in seen and r.term:
+            if not any(t["id"] == r.term.id for t in seen[r.session_id]["terms"]):
                 seen[r.session_id]["terms"].append({
-                    "id": term.id, "term_name": term.term_name, "is_current": term.is_current
+                    "id": r.term.id,
+                    "term_name": r.term.term_name,
+                    "is_current": r.term.is_current,
                 })
+
     return {"items": sorted(seen.values(), key=lambda x: x["id"], reverse=True)}
 
 
@@ -439,9 +475,21 @@ def student_results(student_id: int, session_id: Optional[int] = None,
                     current_user: User = Depends(require_staff)):
     s = db.query(Student).filter(Student.id == student_id).first()
     if not s: raise HTTPException(404, "Student not found")
-    q = db.query(Result).filter(Result.student_id == student_id)
-    if session_id: q = q.filter(Result.session_id == session_id)
+
+    # FIX: eager-load relationships to avoid lazy-load failures
+    q = (
+        db.query(Result)
+        .options(
+            joinedload(Result.subject),
+            joinedload(Result.session),
+            joinedload(Result.term),
+        )
+        .filter(Result.student_id == student_id)
+    )
+    if session_id:
+        q = q.filter(Result.session_id == session_id)
     results = q.all()
+
     return {"student": _student_out(s), "results": [
         {"subject_name": r.subject.name if r.subject else "—",
          "ca_score": r.ca_score, "exam_score": r.exam_score,
