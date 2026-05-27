@@ -225,6 +225,7 @@ def student_my_results(
             "remark":       r.remark,
             "teacher_comment": r.teacher_comment,
             "admin_comment":   r.admin_comment,
+            "conduct_comment": r.conduct_comment if hasattr(r, "conduct_comment") else None,
             "attendance":      r.attendance,
             "days_present":    r.days_present if hasattr(r, "days_present") else None,
             "days_absent":     r.days_absent  if hasattr(r, "days_absent")  else None,

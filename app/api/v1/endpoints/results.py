@@ -97,6 +97,7 @@ def _batch_out(b: ResultBatch, include_results: bool = False) -> dict:
             "position":    r.position,
             "teacher_comment": r.teacher_comment,
             "admin_comment":   r.admin_comment,
+            "conduct_comment": r.conduct_comment if hasattr(r, "conduct_comment") else None,
             "attendance":      r.attendance,
             "days_present":    r.days_present,
             "days_absent":     r.days_absent,
@@ -740,6 +741,7 @@ def get_transcript(student_id: int,
             "position":    r.position,
             "teacher_comment": r.teacher_comment,
             "admin_comment":   r.admin_comment,
+            "conduct_comment": r.conduct_comment if hasattr(r, "conduct_comment") else None,
             "attendance":      r.attendance,
         })
 
@@ -773,8 +775,9 @@ def add_admin_comment(batch_id: int, body: dict,
                       db: Session = Depends(get_db),
                       current_user: User = Depends(require_staff)):
     """Sub admin or admin can add a comment on teacher remarks per student result."""
-    student_id = body.get("student_id")
-    comment    = body.get("comment", "")
+    student_id      = body.get("student_id")
+    comment         = body.get("comment", "")
+    conduct_comment = body.get("conduct_comment")   # optional conduct override
     b = db.query(ResultBatch).filter(ResultBatch.id == batch_id).first()
     if not b: raise HTTPException(404, "Batch not found")
     if student_id:
@@ -784,8 +787,48 @@ def add_admin_comment(batch_id: int, body: dict,
         ).first()
         if result:
             result.admin_comment = comment
+            if conduct_comment is not None:
+                result.conduct_comment = conduct_comment
     db.commit()
     return {"message": "Comment saved"}
+
+
+# ─────────────────────────────────────────────────────────────
+# ADMIN — Set conduct comment for a student per term
+# Applies to ALL result rows for that student+term so it appears
+# once on the report card regardless of number of subjects.
+# ─────────────────────────────────────────────────────────────
+@router.post("/student/{student_id}/conduct")
+def set_conduct_comment(
+    student_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff),
+):
+    """Admin sets a conduct/behaviour comment for a student for a specific term."""
+    term_id = body.get("term_id")
+    comment = body.get("conduct_comment", "")
+    if not term_id:
+        raise HTTPException(400, "term_id is required")
+
+    results = db.query(Result).filter(
+        Result.student_id == student_id,
+        Result.term_id    == term_id,
+    ).all()
+    if not results:
+        raise HTTPException(404, "No results found for this student and term")
+
+    for r in results:
+        r.conduct_comment = comment
+
+    db.add(AuditLog(
+        user_id=current_user.id, user_name=current_user.full_name,
+        user_role=current_user.role.value, action="update",
+        entity_type="conduct_comment", entity_id=student_id,
+        description=f"Set conduct comment for student {student_id}, term {term_id}: {comment[:80]}"
+    ))
+    db.commit()
+    return {"message": "Conduct comment saved"}
 
 
 # ─────────────────────────────────────────────────────────────

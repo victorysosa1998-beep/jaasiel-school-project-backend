@@ -236,7 +236,8 @@ class Result(Base):
     remark      = Column(String(50), nullable=True)
     position    = Column(Integer, nullable=True)
     teacher_comment = Column(Text, nullable=True)  # class teacher's remark per student
-    admin_comment   = Column(Text, nullable=True)  # sub-admin/admin comment on teacher's remark
+    admin_comment   = Column(Text, nullable=True)  # principal's remark (overrides auto-generated)
+    conduct_comment = Column(Text, nullable=True)  # admin's comment on student conduct/behaviour
     attendance      = Column(Integer, nullable=True)  # days school opened (total)
     days_present    = Column(Integer, nullable=True)  # days the student was present
     days_absent     = Column(Integer, nullable=True)  # days the student was absent
