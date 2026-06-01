@@ -175,6 +175,22 @@ def student_my_results(
         from app.models.models import Term as TermModel
         term_obj = db.query(TermModel).filter(TermModel.id == results[0].term_id).first()
 
+    # FALLBACK: if this term has no resumption_date or fees, check sibling
+    # terms in the same session — admin may have saved settings on a different term
+    if term_obj and (not term_obj.resumption_date or not term_obj.next_term_fee):
+        from app.models.models import Term as TermModel
+        siblings = db.query(TermModel).filter(
+            TermModel.session_id == term_obj.session_id,
+            TermModel.id != term_obj.id,
+        ).all()
+        for sib in siblings:
+            if not term_obj.resumption_date and sib.resumption_date:
+                term_obj.resumption_date = sib.resumption_date
+            if not term_obj.next_term_fee and sib.next_term_fee:
+                term_obj.next_term_fee = sib.next_term_fee
+            if term_obj.resumption_date and term_obj.next_term_fee:
+                break
+
     # Get age from date of birth
     age = None
     if s.date_of_birth:
