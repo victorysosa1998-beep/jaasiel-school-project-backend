@@ -370,7 +370,7 @@ subjects_router = APIRouter()
 SCHOOL_CLASSES = ["Creche", "Daycare", "Pre-Nursery",
             "KG 1", "KG 2", "KG 3",
             "Basic 1", "Basic 2", "Basic 3", "Basic 4", "Basic 5",
-            "Jss 1", "Jss 2", "Jss 3",
+            "JSS 1", "JSS 2", "JSS 3",
             "SS 1", "SS 2", "SS 3"]
 
 # DEFAULT_SUBJECTS = ["Mathematics","English Language","Basic Science","Social Studies",

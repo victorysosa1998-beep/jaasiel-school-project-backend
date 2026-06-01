@@ -849,9 +849,14 @@ def set_publish_settings(term_id: int, body: dict,
         try:
             from dateutil import parser
             term.resumption_date = parser.parse(body["resumption_date"])
-        except: pass
+        except Exception as e:
+            raise HTTPException(400, f"Invalid resumption_date format: {e}")
     if body.get("next_term_fee"):
-        term.next_term_fee = body["next_term_fee"]
+        # MERGE into existing fees instead of overwriting — prevents wiping
+        # fees for classes not included in this save operation
+        existing = term.next_term_fee or {}
+        existing.update(body["next_term_fee"])
+        term.next_term_fee = existing
     db.commit()
     return {"message": "Publish settings saved"}
 

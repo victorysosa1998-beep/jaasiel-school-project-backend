@@ -188,13 +188,32 @@ def student_my_results(
     if term_obj and term_obj.next_term_fee and s.class_:
         fees = term_obj.next_term_fee
         class_name = s.class_.name or ""
-        # Try exact match first, then case-insensitive strip match, then "all" fallback
+
+        def _normalize_class(n):
+            """Lowercase + remove all spaces for fuzzy class name matching.
+            e.g. 'JSS 2A' == 'JSS2A' == 'jss2a'
+            """
+            return n.strip().lower().replace(" ", "")
+
+        cn_norm = _normalize_class(class_name)
+
+        # 1. Exact match
+        # 2. Strip-only match (handles leading/trailing spaces)
+        # 3. Case-insensitive match
+        # 4. Whitespace-normalized match  ← NEW: catches "JSS2A" vs "JSS 2A"
+        # 5. "all" catch-all key set by admin for all classes
         next_fee = (
             fees.get(class_name)
             or fees.get(class_name.strip())
             or next(
-                (v for k, v in fees.items() if k.strip().lower() == class_name.strip().lower()),
-                None
+                (v for k, v in fees.items()
+                 if k.strip().lower() == class_name.strip().lower()),
+                None,
+            )
+            or next(
+                (v for k, v in fees.items()
+                 if _normalize_class(k) == cn_norm),
+                None,
             )
             or fees.get("all")
             or None
