@@ -187,7 +187,18 @@ def student_my_results(
     next_fee = None
     if term_obj and term_obj.next_term_fee and s.class_:
         fees = term_obj.next_term_fee
-        next_fee = fees.get(s.class_.name) or fees.get("all") or None
+        class_name = s.class_.name or ""
+        # Try exact match first, then case-insensitive strip match, then "all" fallback
+        next_fee = (
+            fees.get(class_name)
+            or fees.get(class_name.strip())
+            or next(
+                (v for k, v in fees.items() if k.strip().lower() == class_name.strip().lower()),
+                None
+            )
+            or fees.get("all")
+            or None
+        )
 
     # Build photo URL
     photo_url = s.photo_url
