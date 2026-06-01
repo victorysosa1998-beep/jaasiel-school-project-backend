@@ -832,6 +832,23 @@ def set_conduct_comment(
 
 
 # ─────────────────────────────────────────────────────────────
+# ADMIN — Get current term settings (for pre-filling publish modal)
+# ─────────────────────────────────────────────────────────────
+@router.get("/terms/{term_id}/settings")
+def get_term_settings(term_id: int,
+                      db: Session = Depends(get_db),
+                      current_user: User = Depends(require_admin)):
+    from app.models.models import Term as TermModel
+    term = db.query(TermModel).filter(TermModel.id == term_id).first()
+    if not term: raise HTTPException(404, "Term not found")
+    return {
+        "term_id":        term.id,
+        "resumption_date": term.resumption_date.isoformat() if term.resumption_date else None,
+        "next_term_fee":  term.next_term_fee or {},
+    }
+
+
+# ─────────────────────────────────────────────────────────────
 # ADMIN — Set resumption date and next-term fees
 # ─────────────────────────────────────────────────────────────
 @router.post("/terms/{term_id}/publish-settings")
