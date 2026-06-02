@@ -177,18 +177,21 @@ def student_my_results(
 
     # FALLBACK: if this term has no resumption_date or fees, check sibling
     # terms in the same session — admin may have saved settings on a different term
-    if term_obj and (not term_obj.resumption_date or not term_obj.next_term_fee):
+    effective_resumption = term_obj.resumption_date if term_obj else None
+    effective_fees = term_obj.next_term_fee if term_obj else None
+
+    if term_obj and (not effective_resumption or not effective_fees):
         from app.models.models import Term as TermModel
         siblings = db.query(TermModel).filter(
             TermModel.session_id == term_obj.session_id,
             TermModel.id != term_obj.id,
         ).all()
         for sib in siblings:
-            if not term_obj.resumption_date and sib.resumption_date:
-                term_obj.resumption_date = sib.resumption_date
-            if not term_obj.next_term_fee and sib.next_term_fee:
-                term_obj.next_term_fee = sib.next_term_fee
-            if term_obj.resumption_date and term_obj.next_term_fee:
+            if not effective_resumption and sib.resumption_date:
+                effective_resumption = sib.resumption_date
+            if not effective_fees and sib.next_term_fee:
+                effective_fees = sib.next_term_fee
+            if effective_resumption and effective_fees:
                 break
 
     # Get age from date of birth
@@ -201,8 +204,8 @@ def student_my_results(
 
     # Determine next term fee for this student's class
     next_fee = None
-    if term_obj and term_obj.next_term_fee and s.class_:
-        fees = term_obj.next_term_fee
+    if effective_fees and s.class_:
+        fees = effective_fees
         class_name = s.class_.name or ""
 
         def _normalize_class(n):
@@ -258,7 +261,7 @@ def student_my_results(
         "overall_total":  round(overall_total if results else 0, 1),
         "scored_subjects": scored_count if results else 0,
         "average_percent": round(avg, 2),
-        "resumption_date": term_obj.resumption_date.isoformat() if term_obj and term_obj.resumption_date else None,
+        "resumption_date": effective_resumption.isoformat() if effective_resumption else None,
         "next_term_fee": next_fee,
         "results": [{
             "subject_name": r.subject.name if r.subject else "—",

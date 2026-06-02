@@ -205,25 +205,37 @@ def upload_results(body: UploadRequest,
         first_t  = sc.first_test  if sc.first_test  is not None else None
         second_t = sc.second_test if sc.second_test is not None else None
 
-        if first_t is not None and second_t is not None:
-            ca = first_t + second_t
-        elif first_t is not None:
-            ca = first_t
-        elif sc.ca_score is not None:
-            ca = sc.ca_score
+        # Detect a truly blank entry — all score fields are None
+        is_blank = (
+            first_t is None and second_t is None
+            and sc.ca_score is None and sc.exam_score is None
+            and sc.total_score is None
+        )
+
+        if is_blank:
+            # Save a blank placeholder row — shown on report card but excluded from averages
+            ca = None; exam = None; total = None
+            g, r = None, None
         else:
-            ca = 0
+            if first_t is not None and second_t is not None:
+                ca = first_t + second_t
+            elif first_t is not None:
+                ca = first_t
+            elif sc.ca_score is not None:
+                ca = sc.ca_score
+            else:
+                ca = 0
 
-        exam  = sc.exam_score or 0
+            exam  = sc.exam_score if sc.exam_score is not None else 0
 
-        # If no_test mode: teacher enters total directly (no CA breakdown)
-        if body.no_test:
-            total = sc.total_score if sc.total_score is not None else exam
-            ca    = 0
-        else:
-            total = sc.total_score if sc.total_score is not None else (ca + exam)
+            # If no_test mode: teacher enters total directly (no CA breakdown)
+            if body.no_test:
+                total = sc.total_score if sc.total_score is not None else exam
+                ca    = 0
+            else:
+                total = sc.total_score if sc.total_score is not None else (ca + exam)
 
-        g, r  = calculate_grade(total)
+            g, r  = calculate_grade(total)
         existing = db.query(Result).filter(
             Result.student_id == student.id,
             Result.subject_id == subject.id,
@@ -244,7 +256,8 @@ def upload_results(body: UploadRequest,
                 subject_id=subject.id, session_id=session.id,
                 term_id=term.id, batch_id=batch.id,
                 first_test=first_t, second_test=second_t,
-                ca_score=ca, exam_score=exam, total_score=total,
+                ca_score=ca if not is_blank else None,
+                exam_score=exam, total_score=total,
                 grade=g, remark=r, status=ResultStatus.pending,
                 teacher_comment=sc.teacher_comment,
                 attendance=sc.attendance,
