@@ -166,7 +166,9 @@ def student_my_results(
     else:
         avg = 0; scored_count = 0; overall_total = 0; position = None; total_students = None
 
-    # Get term settings (resumption date, next term fee)
+    # Get term settings (resumption date, next term fee) — strictly per-term only
+    # Fees are set by the admin per term and belong only to that term's results.
+    # No fallback to sibling terms — each term has its own fees.
     term_obj = None
     if term_id:
         from app.models.models import Term as TermModel
@@ -175,24 +177,8 @@ def student_my_results(
         from app.models.models import Term as TermModel
         term_obj = db.query(TermModel).filter(TermModel.id == results[0].term_id).first()
 
-    # FALLBACK: if this term has no resumption_date or fees, check sibling
-    # terms in the same session — admin may have saved settings on a different term
     effective_resumption = term_obj.resumption_date if term_obj else None
     effective_fees = term_obj.next_term_fee if term_obj else None
-
-    if term_obj and (not effective_resumption or not effective_fees):
-        from app.models.models import Term as TermModel
-        siblings = db.query(TermModel).filter(
-            TermModel.session_id == term_obj.session_id,
-            TermModel.id != term_obj.id,
-        ).all()
-        for sib in siblings:
-            if not effective_resumption and sib.resumption_date:
-                effective_resumption = sib.resumption_date
-            if not effective_fees and sib.next_term_fee:
-                effective_fees = sib.next_term_fee
-            if effective_resumption and effective_fees:
-                break
 
     # Get age from date of birth
     age = None
@@ -219,19 +205,24 @@ def student_my_results(
         # 1. Exact match
         # 2. Strip-only match (handles leading/trailing spaces)
         # 3. Case-insensitive match
-        # 4. Whitespace-normalized match  ← NEW: catches "JSS2A" vs "JSS 2A"
-        # 5. "all" catch-all key set by admin for all classes
+        # 4. Whitespace-normalized match (catches "JSS2A" vs "JSS 2A")
+        # 5. Any fee key that is a substring of the class name or vice versa (catches "JSS 1" vs "JSS 1A")
+        # 6. "all" catch-all key set by admin for all classes
+        def _fee_match(k, student_class):
+            k_norm   = _normalize_class(k)
+            sc_norm  = _normalize_class(student_class)
+            return (
+                k.strip().lower() == student_class.strip().lower()
+                or k_norm == sc_norm
+                or k_norm in sc_norm
+                or sc_norm in k_norm
+            )
+
         next_fee = (
             fees.get(class_name)
             or fees.get(class_name.strip())
             or next(
-                (v for k, v in fees.items()
-                 if k.strip().lower() == class_name.strip().lower()),
-                None,
-            )
-            or next(
-                (v for k, v in fees.items()
-                 if _normalize_class(k) == cn_norm),
+                (v for k, v in fees.items() if _fee_match(k, class_name)),
                 None,
             )
             or fees.get("all")
