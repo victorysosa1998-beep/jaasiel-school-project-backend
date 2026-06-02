@@ -205,37 +205,25 @@ def upload_results(body: UploadRequest,
         first_t  = sc.first_test  if sc.first_test  is not None else None
         second_t = sc.second_test if sc.second_test is not None else None
 
-        # Detect a truly blank entry — all score fields are None
-        is_blank = (
-            first_t is None and second_t is None
-            and sc.ca_score is None and sc.exam_score is None
-            and sc.total_score is None
-        )
-
-        if is_blank:
-            # Save a blank placeholder row — shown on report card but excluded from averages
-            ca = None; exam = None; total = None
-            g, r = None, None
+        if first_t is not None and second_t is not None:
+            ca = first_t + second_t
+        elif first_t is not None:
+            ca = first_t
+        elif sc.ca_score is not None:
+            ca = sc.ca_score
         else:
-            if first_t is not None and second_t is not None:
-                ca = first_t + second_t
-            elif first_t is not None:
-                ca = first_t
-            elif sc.ca_score is not None:
-                ca = sc.ca_score
-            else:
-                ca = 0
+            ca = 0
 
-            exam  = sc.exam_score if sc.exam_score is not None else 0
+        exam  = sc.exam_score or 0
 
-            # If no_test mode: teacher enters total directly (no CA breakdown)
-            if body.no_test:
-                total = sc.total_score if sc.total_score is not None else exam
-                ca    = 0
-            else:
-                total = sc.total_score if sc.total_score is not None else (ca + exam)
+        # If no_test mode: teacher enters total directly (no CA breakdown)
+        if body.no_test:
+            total = sc.total_score if sc.total_score is not None else exam
+            ca    = 0
+        else:
+            total = sc.total_score if sc.total_score is not None else (ca + exam)
 
-            g, r  = calculate_grade(total)
+        g, r  = calculate_grade(total)
         existing = db.query(Result).filter(
             Result.student_id == student.id,
             Result.subject_id == subject.id,
@@ -256,8 +244,7 @@ def upload_results(body: UploadRequest,
                 subject_id=subject.id, session_id=session.id,
                 term_id=term.id, batch_id=batch.id,
                 first_test=first_t, second_test=second_t,
-                ca_score=ca if not is_blank else None,
-                exam_score=exam, total_score=total,
+                ca_score=ca, exam_score=exam, total_score=total,
                 grade=g, remark=r, status=ResultStatus.pending,
                 teacher_comment=sc.teacher_comment,
                 attendance=sc.attendance,
@@ -882,11 +869,15 @@ def set_publish_settings(term_id: int, body: dict,
         except Exception as e:
             raise HTTPException(400, f"Invalid resumption_date format: {e}")
     if body.get("next_term_fee"):
-        # MERGE into existing fees instead of overwriting — prevents wiping
-        # fees for classes not included in this save operation
-        existing = term.next_term_fee or {}
-        existing.update(body["next_term_fee"])
-        term.next_term_fee = existing
+        # Build a brand-new dict so SQLAlchemy detects the JSON column as changed.
+        # Mutating the existing dict in-place (existing.update()) is invisible to
+        # SQLAlchemy's change tracking — it sees the same object identity and skips
+        # the UPDATE. Assigning a new dict forces it to mark the column dirty.
+        merged = dict(term.next_term_fee or {})
+        merged.update(body["next_term_fee"])
+        term.next_term_fee = merged
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(term, "next_term_fee")
     db.commit()
     return {"message": "Publish settings saved"}
 
@@ -899,10 +890,12 @@ def sub_admin_set_fees(term_id: int, body: dict,
     from app.models.models import Term as TermModel
     term = db.query(TermModel).filter(TermModel.id == term_id).first()
     if not term: raise HTTPException(404, "Term not found")
-    existing = term.next_term_fee or {}
     if body.get("next_term_fee"):
-        existing.update(body["next_term_fee"])
-        term.next_term_fee = existing
+        merged = dict(term.next_term_fee or {})
+        merged.update(body["next_term_fee"])
+        term.next_term_fee = merged
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(term, "next_term_fee")
     db.commit()
     return {"message": "School fees submitted"}
 
