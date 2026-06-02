@@ -166,9 +166,7 @@ def student_my_results(
     else:
         avg = 0; scored_count = 0; overall_total = 0; position = None; total_students = None
 
-    # Get term settings (resumption date, next term fee) — strictly per-term only
-    # Fees are set by the admin per term and belong only to that term's results.
-    # No fallback to sibling terms — each term has its own fees.
+    # Get term settings (resumption date, next term fee)
     term_obj = None
     if term_id:
         from app.models.models import Term as TermModel
@@ -177,8 +175,21 @@ def student_my_results(
         from app.models.models import Term as TermModel
         term_obj = db.query(TermModel).filter(TermModel.id == results[0].term_id).first()
 
-    effective_resumption = term_obj.resumption_date if term_obj else None
-    effective_fees = term_obj.next_term_fee if term_obj else None
+    # FALLBACK: if this term has no resumption_date or fees, check sibling
+    # terms in the same session — admin may have saved settings on a different term
+    if term_obj and (not term_obj.resumption_date or not term_obj.next_term_fee):
+        from app.models.models import Term as TermModel
+        siblings = db.query(TermModel).filter(
+            TermModel.session_id == term_obj.session_id,
+            TermModel.id != term_obj.id,
+        ).all()
+        for sib in siblings:
+            if not term_obj.resumption_date and sib.resumption_date:
+                term_obj.resumption_date = sib.resumption_date
+            if not term_obj.next_term_fee and sib.next_term_fee:
+                term_obj.next_term_fee = sib.next_term_fee
+            if term_obj.resumption_date and term_obj.next_term_fee:
+                break
 
     # Get age from date of birth
     age = None
@@ -190,8 +201,8 @@ def student_my_results(
 
     # Determine next term fee for this student's class
     next_fee = None
-    if effective_fees and s.class_:
-        fees = effective_fees
+    if term_obj and term_obj.next_term_fee and s.class_:
+        fees = term_obj.next_term_fee
         class_name = s.class_.name or ""
 
         def _normalize_class(n):
@@ -205,24 +216,19 @@ def student_my_results(
         # 1. Exact match
         # 2. Strip-only match (handles leading/trailing spaces)
         # 3. Case-insensitive match
-        # 4. Whitespace-normalized match (catches "JSS2A" vs "JSS 2A")
-        # 5. Any fee key that is a substring of the class name or vice versa (catches "JSS 1" vs "JSS 1A")
-        # 6. "all" catch-all key set by admin for all classes
-        def _fee_match(k, student_class):
-            k_norm   = _normalize_class(k)
-            sc_norm  = _normalize_class(student_class)
-            return (
-                k.strip().lower() == student_class.strip().lower()
-                or k_norm == sc_norm
-                or k_norm in sc_norm
-                or sc_norm in k_norm
-            )
-
+        # 4. Whitespace-normalized match  ← NEW: catches "JSS2A" vs "JSS 2A"
+        # 5. "all" catch-all key set by admin for all classes
         next_fee = (
             fees.get(class_name)
             or fees.get(class_name.strip())
             or next(
-                (v for k, v in fees.items() if _fee_match(k, class_name)),
+                (v for k, v in fees.items()
+                 if k.strip().lower() == class_name.strip().lower()),
+                None,
+            )
+            or next(
+                (v for k, v in fees.items()
+                 if _normalize_class(k) == cn_norm),
                 None,
             )
             or fees.get("all")
@@ -252,7 +258,7 @@ def student_my_results(
         "overall_total":  round(overall_total if results else 0, 1),
         "scored_subjects": scored_count if results else 0,
         "average_percent": round(avg, 2),
-        "resumption_date": effective_resumption.isoformat() if effective_resumption else None,
+        "resumption_date": term_obj.resumption_date.isoformat() if term_obj and term_obj.resumption_date else None,
         "next_term_fee": next_fee,
         "results": [{
             "subject_name": r.subject.name if r.subject else "—",
@@ -408,9 +414,17 @@ def update_student(student_id: int, body: dict, db: Session = Depends(get_db),
     if not s: raise HTTPException(404, "Student not found")
     for field in ["full_name","first_name","middle_name","last_name","parent_phone","parent_email","address","photo_url"]:
         if field in body: setattr(s, field, body[field])
+    if "date_of_birth" in body and body["date_of_birth"]:
+        try:
+            from dateutil import parser as dateparser
+            s.date_of_birth = dateparser.parse(str(body["date_of_birth"]))
+        except Exception:
+            pass
     if "class_name" in body:
         cls = db.query(Class).filter(Class.name == body["class_name"]).first()
         if cls: s.class_id = cls.id
+    if "class_id" in body and body["class_id"]:
+        s.class_id = int(body["class_id"])
     if "gender" in body:
         from app.models.models import Gender
         try: s.gender = Gender(body["gender"])
