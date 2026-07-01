@@ -252,14 +252,34 @@ def subadmin_uploads(page: int = 1, per_page: int = 20, status: Optional[str] = 
 # ── Admin: list submitted reports awaiting review ──────────────────
 @router.get("/pending")
 def pending_reports(page: int = 1, per_page: int = 20,
-                     class_id: Optional[int] = None, term_id: Optional[int] = None,
+                     class_id: Optional[int] = None, class_name: Optional[str] = None,
+                     term_id: Optional[int] = None,
                      db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    q = db.query(MontessoriReport).filter(MontessoriReport.status == ResultStatus.submitted)
-    if class_id: q = q.filter(MontessoriReport.class_id == class_id)
-    if term_id:  q = q.filter(MontessoriReport.term_id == term_id)
+
+    def base_query():
+        q = db.query(MontessoriReport)
+        if class_id:
+            q = q.filter(MontessoriReport.class_id == class_id)
+        if class_name:
+            q = q.join(Class, MontessoriReport.class_id == Class.id) \
+                 .filter(Class.name.ilike(class_name))
+        if term_id:
+            q = q.filter(MontessoriReport.term_id == term_id)
+        return q
+
+    q = base_query().filter(MontessoriReport.status == ResultStatus.submitted)
     total = q.count()
     items = q.order_by(MontessoriReport.uploaded_at.desc()).offset((page-1)*per_page).limit(per_page).all()
-    return {"items": [_out(r) for r in items], "total": total}
+
+    approved_count = base_query().filter(MontessoriReport.status == ResultStatus.approved).count()
+    correction_count = base_query().filter(MontessoriReport.status == ResultStatus.correction_requested).count()
+
+    return {
+        "items": [_out(r) for r in items],
+        "total": total,
+        "approved_count": approved_count,
+        "correction_count": correction_count,
+    }
 
 
 # ── Admin: approve ──────────────────────────────────────────────────
