@@ -11,6 +11,7 @@ from app.models.models import Student, Class, Result, ResultStatus, AuditLog, Us
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.api.v1.deps import get_current_user, require_staff, require_admin, get_client_ip
 from app.utils.grading import generate_student_id, generate_username, generate_default_password
+from app.utils.montessori_data import is_montessori_class
 from app.core.config import settings
 
 router = APIRouter()
@@ -41,6 +42,7 @@ def _student_out(s: Student, include_password: bool = False) -> dict:
         "date_of_birth": s.date_of_birth.isoformat() if s.date_of_birth else None,
         "gender": s.gender.value if s.gender else None,
         "class_name": s.class_.name if s.class_ else None, "class_id": s.class_id,
+        "is_montessori": is_montessori_class(s.class_.name if s.class_ else None),
         "parent_phone": s.parent_phone, "parent_email": s.parent_email,
         "address": s.address, "photo_url": s.photo_url,
         "is_active": s.is_active, "must_change_pwd": s.must_change_pwd,

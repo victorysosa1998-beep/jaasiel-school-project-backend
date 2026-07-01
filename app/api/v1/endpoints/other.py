@@ -16,6 +16,7 @@ from app.models.models import (
 )
 from app.api.v1.deps import get_current_user, require_admin, require_staff
 from app.core.security import hash_password
+from app.utils.montessori_data import is_montessori_class
 
 # ══════════════════════════════════════════════════════════════
 # DASHBOARD
@@ -385,6 +386,7 @@ def list_classes(db: Session = Depends(get_db), current_user: User = Depends(req
     classes = db.query(Class).filter(Class.is_active == True).all()
     return {"items": [{
         "id": c.id, "name": c.name,
+        "is_montessori": is_montessori_class(c.name),
         "student_count": db.query(Student).filter(Student.class_id == c.id, Student.is_active == True).count(),
     } for c in classes]}
 

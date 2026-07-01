@@ -262,6 +262,52 @@ class Result(Base):
 
 
 # ══════════════════════════════════════════════════════════════
+# MONTESSORI REPORTS  (Creche / Daycare / Pre-Nursery / KG)
+#
+# Early-years classes don't use subject scores, averages, grades or
+# positions. Instead they're assessed on a set of developmental
+# skills/behaviours, each rated 1-3 (see app/utils/montessori_data.py
+# for the category list and the meaning of each rating).
+# ══════════════════════════════════════════════════════════════
+
+class MontessoriReport(Base):
+    __tablename__ = "montessori_reports"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    student_id  = Column(Integer, ForeignKey("students.id"), nullable=False)
+    class_id    = Column(Integer, ForeignKey("classes.id"),  nullable=False)
+    session_id  = Column(Integer, ForeignKey("sessions.id"), nullable=False)
+    term_id     = Column(Integer, ForeignKey("terms.id"),    nullable=False)
+
+    # { "Music and Physical Education": {"Shows interest...": 2, ...}, ... }
+    ratings     = Column(JSON, nullable=True)
+
+    general_comment      = Column(Text,   nullable=True)  # "HAVE A WONDERFUL HOLIDAY" box
+    class_teacher_name   = Column(String(200), nullable=True)
+    class_teacher_report = Column(String(300), nullable=True)  # e.g. "Good Result"
+    pupils_conduct       = Column(String(300), nullable=True)  # e.g. "Well Behaved"
+    proprietors_report   = Column(String(300), nullable=True)  # e.g. "Satisfactory"
+    resumption_date      = Column(DateTime(timezone=True), nullable=True)
+
+    status      = Column(SAEnum(ResultStatus), default=ResultStatus.pending, nullable=False, index=True)
+    entered_by  = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                         onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "term_id", name="uq_montessori_student_term"),
+    )
+
+    student = relationship("Student", foreign_keys=[student_id])
+    class_  = relationship("Class",   foreign_keys=[class_id])
+    session = relationship("Session", foreign_keys=[session_id])
+    term    = relationship("Term",    foreign_keys=[term_id])
+
+
+# ══════════════════════════════════════════════════════════════
 # OCR JOBS
 # ══════════════════════════════════════════════════════════════
 
