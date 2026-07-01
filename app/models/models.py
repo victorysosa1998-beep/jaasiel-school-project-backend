@@ -24,11 +24,11 @@ class UserRole(str, enum.Enum):
 
 class ResultStatus(str, enum.Enum):
     pending              = "pending"
-    submitted            = "submitted"      # sub-admin finished all subjects, pushed to admin
-    approved             = "approved"       # admin approved
+    submitted            = "submitted"
+    approved             = "approved"
     rejected             = "rejected"
     correction_requested = "correction_requested"
-    locked               = "locked"         # admin locked — no more edits
+    locked               = "locked"
     published            = "published"
 
 class Gender(str, enum.Enum):
@@ -38,7 +38,7 @@ class Gender(str, enum.Enum):
 
 
 # ══════════════════════════════════════════════════════════════
-# USERS  (admins, sub-admins — NOT students)
+# USERS
 # ══════════════════════════════════════════════════════════════
 
 class User(Base):
@@ -68,7 +68,7 @@ class Class(Base):
 
     id          = Column(Integer, primary_key=True, index=True)
     name        = Column(String(100), unique=True, nullable=False)
-    level       = Column(String(50), nullable=True)   # e.g. "Junior", "Senior", "Primary"
+    level       = Column(String(50), nullable=True)
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -89,7 +89,6 @@ class Subject(Base):
 
 
 class ClassSubject(Base):
-    """Maps which subjects are taught in which classes."""
     __tablename__ = "class_subjects"
 
     id         = Column(Integer, primary_key=True)
@@ -110,7 +109,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id           = Column(Integer, primary_key=True, index=True)
-    session_name = Column(String(50), unique=True, nullable=False)  # e.g. "2024/2025"
+    session_name = Column(String(50), unique=True, nullable=False)
     start_date   = Column(DateTime(timezone=True), nullable=True)
     end_date     = Column(DateTime(timezone=True), nullable=True)
     is_current   = Column(Boolean, default=False)
@@ -126,12 +125,12 @@ class Term(Base):
 
     id         = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
-    term_name  = Column(String(50), nullable=False)  # "First Term", "Second Term", "Third Term"
+    term_name  = Column(String(50), nullable=False)
     start_date = Column(DateTime(timezone=True), nullable=True)
     end_date   = Column(DateTime(timezone=True), nullable=True)
     is_current = Column(Boolean, default=False)
-    resumption_date = Column(DateTime(timezone=True), nullable=True)  # next term resumption date
-    next_term_fee   = Column(JSON, nullable=True)  # {class_name: fee_amount} dict
+    resumption_date = Column(DateTime(timezone=True), nullable=True)
+    next_term_fee   = Column(JSON, nullable=True)
 
     session = relationship("Session", back_populates="terms")
     results = relationship("Result",  back_populates="term")
@@ -189,7 +188,6 @@ class StudentLoginSession(Base):
 # ══════════════════════════════════════════════════════════════
 
 class ResultBatch(Base):
-    """Groups results by sub_admin+class+subject+term for admin approval."""
     __tablename__ = "result_batches"
 
     id           = Column(Integer, primary_key=True, index=True)
@@ -199,7 +197,7 @@ class ResultBatch(Base):
     session_id   = Column(Integer, ForeignKey("sessions.id"), nullable=False)
     term_id      = Column(Integer, ForeignKey("terms.id"), nullable=False)
     status       = Column(SAEnum(ResultStatus), default=ResultStatus.pending, nullable=False, index=True)
-    upload_type  = Column(String(20), default="manual")   # manual | ocr | csv
+    upload_type  = Column(String(20), default="manual")
     admin_note   = Column(Text, nullable=True)
     version      = Column(Integer, default=1)
     has_issues   = Column(Boolean, default=False)
@@ -227,20 +225,20 @@ class Result(Base):
     term_id     = Column(Integer, ForeignKey("terms.id"),    nullable=False)
     batch_id    = Column(Integer, ForeignKey("result_batches.id"), nullable=True)
 
-    first_test  = Column(Float, nullable=True)   # out of 20 (optional)
-    second_test = Column(Float, nullable=True)   # out of 20 (optional)
-    ca_score    = Column(Float, nullable=True)   # combined CA or direct entry
+    first_test  = Column(Float, nullable=True)
+    second_test = Column(Float, nullable=True)
+    ca_score    = Column(Float, nullable=True)
     exam_score  = Column(Float, nullable=True)
     total_score = Column(Float, nullable=True)
     grade       = Column(String(5), nullable=True)
     remark      = Column(String(50), nullable=True)
     position    = Column(Integer, nullable=True)
-    teacher_comment = Column(Text, nullable=True)  # class teacher's remark per student
-    admin_comment   = Column(Text, nullable=True)  # principal's remark (overrides auto-generated)
-    conduct_comment = Column(Text, nullable=True)  # admin's comment on student conduct/behaviour
-    attendance      = Column(Integer, nullable=True)  # days school opened (total)
-    days_present    = Column(Integer, nullable=True)  # days the student was present
-    days_absent     = Column(Integer, nullable=True)  # days the student was absent
+    teacher_comment = Column(Text, nullable=True)
+    admin_comment   = Column(Text, nullable=True)
+    conduct_comment = Column(Text, nullable=True)
+    attendance      = Column(Integer, nullable=True)
+    days_present    = Column(Integer, nullable=True)
+    days_absent     = Column(Integer, nullable=True)
 
     status      = Column(SAEnum(ResultStatus), default=ResultStatus.pending, nullable=False, index=True)
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -262,12 +260,7 @@ class Result(Base):
 
 
 # ══════════════════════════════════════════════════════════════
-# MONTESSORI REPORTS  (Creche / Daycare / Pre-Nursery / KG)
-#
-# Early-years classes don't use subject scores, averages, grades or
-# positions. Instead they're assessed on a set of developmental
-# skills/behaviours, each rated 1-3 (see app/utils/montessori_data.py
-# for the category list and the meaning of each rating).
+# MONTESSORI REPORTS  (Creche / Daycare / Pre-Nursery)
 # ══════════════════════════════════════════════════════════════
 
 class MontessoriReport(Base):
@@ -279,14 +272,14 @@ class MontessoriReport(Base):
     session_id  = Column(Integer, ForeignKey("sessions.id"), nullable=False)
     term_id     = Column(Integer, ForeignKey("terms.id"),    nullable=False)
 
-    # { "Music and Physical Education": {"Shows interest...": 2, ...}, ... }
     ratings     = Column(JSON, nullable=True)
 
-    general_comment      = Column(Text,   nullable=True)  # "HAVE A WONDERFUL HOLIDAY" box
+    general_comment      = Column(Text,   nullable=True)
     class_teacher_name   = Column(String(200), nullable=True)
-    class_teacher_report = Column(String(300), nullable=True)  # e.g. "Good Result"
-    pupils_conduct       = Column(String(300), nullable=True)  # e.g. "Well Behaved"
-    proprietors_report   = Column(String(300), nullable=True)  # e.g. "Satisfactory"
+    class_teacher_report = Column(String(300), nullable=True)
+    pupils_conduct       = Column(String(300), nullable=True)
+    proprietors_report   = Column(String(300), nullable=True)
+    admin_note            = Column(Text, nullable=True)          # NEW — reject/correction reason
     resumption_date      = Column(DateTime(timezone=True), nullable=True)
 
     status      = Column(SAEnum(ResultStatus), default=ResultStatus.pending, nullable=False, index=True)
@@ -322,7 +315,7 @@ class OcrJob(Base):
     term_id           = Column(Integer, ForeignKey("terms.id"), nullable=True)
     filename          = Column(String(300), nullable=True)
     filepath          = Column(String(500), nullable=True)
-    extraction_status = Column(String(30), default="pending")  # pending|processing|completed|failed
+    extraction_status = Column(String(30), default="pending")
     confidence_score  = Column(Float, nullable=True)
     student_count     = Column(Integer, nullable=True)
     error_message     = Column(Text, nullable=True)
@@ -343,7 +336,7 @@ class OcrRow(Base):
     job_id                = Column(Integer, ForeignKey("ocr_jobs.id"), nullable=False)
     extracted_name        = Column(String(300), nullable=True)
     matched_student_id    = Column(Integer, ForeignKey("students.id"), nullable=True)
-    match_type            = Column(String(20), default="none")  # full|fuzzy|none
+    match_type            = Column(String(20), default="none")
     confidence            = Column(Float, default=0)
     ca_score              = Column(Float, nullable=True)
     exam_score            = Column(Float, nullable=True)
@@ -399,7 +392,7 @@ class Notification(Base):
     id         = Column(Integer, primary_key=True, index=True)
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=True)
-    type       = Column(String(50), nullable=True)  # approved|rejected|correction|upload|etc
+    type       = Column(String(50), nullable=True)
     title      = Column(String(200), nullable=False)
     message    = Column(Text, nullable=True)
     read       = Column(Boolean, default=False)
