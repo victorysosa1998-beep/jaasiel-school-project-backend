@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional, List
 from app.db.base import get_db
-from app.models.models import Student, Class, Result, ResultStatus, AuditLog, User, UserRole
+from app.models.models import Student, Class, Result, ResultStatus, AuditLog, User, UserRole, MontessoriReport
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.api.v1.deps import get_current_user, require_staff, require_admin, get_client_ip
 from app.utils.grading import generate_student_id, generate_username, generate_default_password
@@ -308,8 +308,25 @@ def student_my_sessions(
         .all()
     )
 
+    # FIX: Montessori pupils don't have rows in Result — their published
+    # work lives in MontessoriReport instead. Without this, Montessori
+    # students always got an empty sessions/terms dropdown even though
+    # they had published reports (visible via /montessori/me/all).
+    montessori_reports = (
+        db.query(MontessoriReport)
+        .options(
+            joinedload(MontessoriReport.session),
+            joinedload(MontessoriReport.term),
+        )
+        .filter(
+            MontessoriReport.student_id == s.id,
+            MontessoriReport.status.in_([ResultStatus.approved, ResultStatus.published, ResultStatus.locked])
+        )
+        .all()
+    )
+
     seen = {}
-    for r in results:
+    for r in list(results) + list(montessori_reports):
         if r.session_id not in seen and r.session:
             seen[r.session_id] = {
                 "id": r.session.id,
