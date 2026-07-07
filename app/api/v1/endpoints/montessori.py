@@ -58,13 +58,193 @@ class MontessoriIn(BaseModel):
     resumption_date: Optional[str] = None  # ISO date string (unused now — kept for compat)
 
 
-def _out(r: MontessoriReport) -> dict:
+def _normalize_class(n: str) -> str:
+    """Lowercase + remove all spaces for fuzzy class name matching."""
+    return (n or "").strip().lower().replace(" ", "")
+
+
+def _rating_avg(ratings: dict) -> float:
+    """Average of all rated (1-3) skill items across every category."""
+    total = 0
+    s = 0.0
+    for cat in (ratings or {}).values():
+        for v in (cat or {}).values():
+            if v is not None:
+                total += 1
+                s += float(v)
+    return (s / total) if total else 0.0
+
+
+def _rating_category_avgs(ratings: dict) -> dict:
+    """Average rating per category, skipping categories with no ratings yet."""
+    out = {}
+    for cat, items in (ratings or {}).items():
+        vals = [float(v) for v in (items or {}).values() if v is not None]
+        if vals:
+            out[cat] = sum(vals) / len(vals)
+    return out
+
+
+def _auto_class_teacher_report(ratings: dict) -> str:
+    """
+    Auto-generate the Class Teacher's Report from the pupil's actual
+    ratings this term — this is the single source of truth (never typed
+    in manually, and recomputed server-side on every save/publish so it
+    can never go stale relative to the ratings actually on file).
+
+    Calls out the pupil's strongest/weakest category so pupils in the
+    same overall band don't all read identical wording.
+    """
+    avg = _rating_avg(ratings)
+    if not avg:
+        return "Not yet assessed for this term."
+
+    cat_avgs  = _rating_category_avgs(ratings)
+    strongest = max(cat_avgs, key=cat_avgs.get) if cat_avgs else None
+    weakest   = min(cat_avgs, key=cat_avgs.get) if cat_avgs else None
+
+    if avg >= 2.8:
+        text = "Outstanding developmental progress this term."
+        if strongest:
+            text += f" {strongest} was a particular highlight."
+        return text + " Keep up the excellent work."
+    if avg >= 2.4:
+        text = "Excellent developmental progress this term."
+        if strongest:
+            text += f" {strongest} stood out as a strength."
+        return text + " Keep up the good work."
+    if avg >= 2.0:
+        text = "Good, steady progress this term."
+        if weakest and cat_avgs[weakest] < 2.0:
+            text += f" A little more practice with {weakest.lower()} would help."
+        return text + " Continue practicing these skills at home."
+    if avg >= 1.5:
+        text = "Fair progress this term, with room to grow."
+        if weakest:
+            text += f" {weakest} needs the most encouragement."
+        return text
+    text = "Needs more support and practice with these skills next term."
+    if weakest:
+        text += f" {weakest} in particular."
+    return text
+
+
+def _auto_proprietors_report(ratings: dict) -> str:
+    """
+    Auto-generate the Proprietor's Report — shorter and more formal than
+    the class teacher's report, and worded distinctly per band so pupils
+    at the same average don't read identical text in both fields.
+    """
+    avg = _rating_avg(ratings)
+    if not avg:
+        return "Not yet assessed for this term."
+    if avg >= 2.8:
+        return "An outstanding term. Well done — keep up this standard."
+    if avg >= 2.4:
+        return "Commendable performance this term. Well done."
+    if avg >= 2.0:
+        return "Satisfactory progress overall. Keep encouraging your ward at home."
+    if avg >= 1.5:
+        return "Fair progress. More encouragement at home would help."
+    return "Requires more attention and encouragement at home to strengthen these skills."
+
+
+def _resolve_term_settings(db: Session, term, cache: Optional[dict] = None):
+    """
+    Mirror the live Term-based resumption-date / next-term-fee lookup used
+    for the regular (subject-based) report card in students.py, so the
+    Montessori report always reflects the school-wide Term settings instead
+    of a per-report copy.
+
+    Falls back to sibling terms in the same session if this term has no
+    resumption_date / next_term_fee saved (admin may have set it on a
+    different term of the same session).
+
+    `cache` is an optional dict (keyed by term_id) shared across a single
+    request — list/bulk endpoints render many reports at once and would
+    otherwise re-run the sibling-term query once per report.
+    """
+    if not term:
+        return None, {}
+
+    if cache is not None and term.id in cache:
+        return cache[term.id]
+
+    resumption = term.resumption_date
+    fees = term.next_term_fee
+
+    if not resumption or not fees:
+        siblings = db.query(Term).filter(
+            Term.session_id == term.session_id,
+            Term.id != term.id,
+        ).all()
+        for sib in siblings:
+            if not resumption and sib.resumption_date:
+                resumption = sib.resumption_date
+            if not fees and sib.next_term_fee:
+                fees = sib.next_term_fee
+            if resumption and fees:
+                break
+
+    result = (resumption, fees or {})
+    if cache is not None:
+        cache[term.id] = result
+    return result
+
+
+def _class_fee(fees: dict, class_name: str):
+    """
+    Look up a class's fee from the Term's next_term_fee dict.
+    Uses explicit None checks (not `or` chaining) so a legitimately-set
+    fee of 0 is still returned instead of being treated as "not found"
+    and falling through to the next lookup strategy.
+    """
+    if not fees or not class_name:
+        return None
+
+    def _first_match(candidates):
+        for v in candidates:
+            if v is not None:
+                return v
+        return None
+
+    cn_norm = _normalize_class(class_name)
+    exact = fees.get(class_name)
+    if exact is not None:
+        return exact
+    stripped = fees.get(class_name.strip())
+    if stripped is not None:
+        return stripped
+    ci_match = _first_match(
+        v for k, v in fees.items() if k.strip().lower() == class_name.strip().lower()
+    )
+    if ci_match is not None:
+        return ci_match
+    norm_match = _first_match(
+        v for k, v in fees.items() if _normalize_class(k) == cn_norm
+    )
+    if norm_match is not None:
+        return norm_match
+    return fees.get("all")
+
+
+def _out(r: MontessoriReport, db: Optional[Session] = None, cache: Optional[dict] = None) -> dict:
+    class_name = r.class_.name if r.class_ else None
+
+    resumption_date, fees = (None, {})
+    if db is not None:
+        resumption_date, fees = _resolve_term_settings(db, r.term, cache)
+    else:
+        resumption_date = r.term.resumption_date if r.term else None
+        fees = (r.term.next_term_fee if r.term else None) or {}
+    next_term_fee = _class_fee(fees, class_name)
+
     return {
         "id": r.id,
         "student_id": r.student_id,
         "student_name": r.student.full_name if r.student else None,
         "class_id": r.class_id,
-        "class_name": r.class_.name if r.class_ else None,
+        "class_name": class_name,
         "session_id": r.session_id,
         "session_name": r.session.session_name if r.session else None,
         "term_id": r.term_id,
@@ -75,11 +255,17 @@ def _out(r: MontessoriReport) -> dict:
         "class_teacher_report": r.class_teacher_report,
         "pupils_conduct": r.pupils_conduct,
         "proprietors_report": r.proprietors_report,
-        "resumption_date": r.resumption_date.isoformat() if r.resumption_date else None,
+        # Live from the shared Term record (same as the regular report card),
+        # falling back to the report's own stored value for old data.
+        "resumption_date": (resumption_date or r.resumption_date).isoformat() if (resumption_date or r.resumption_date) else None,
+        "next_term_fee": next_term_fee,
         "status": r.status.value if r.status else None,
         "admin_note": r.admin_note,
         "correction_comment": r.admin_note,   # alias so frontend list code can reuse the results pattern
         "uploaded_at": r.uploaded_at.isoformat() if r.uploaded_at else None,
+        # The date the report was actually published to the student —
+        # distinct from uploaded_at (when a sub admin first saved a draft).
+        "published_at": r.approved_at.isoformat() if (r.status == ResultStatus.published and r.approved_at) else None,
         "entered_by": r.entered_by,
     }
 
@@ -113,14 +299,16 @@ def save_report(body: MontessoriIn, db: Session = Depends(get_db),
             resumption = None
 
     cleaned_ratings = validate_ratings(body.ratings)
+    auto_teacher_report = _auto_class_teacher_report(cleaned_ratings)
+    auto_proprietors_report = _auto_proprietors_report(cleaned_ratings)
 
     if existing:
         existing.ratings = cleaned_ratings
         existing.general_comment = body.general_comment
         existing.class_teacher_name = body.class_teacher_name
-        existing.class_teacher_report = body.class_teacher_report
+        existing.class_teacher_report = auto_teacher_report
         existing.pupils_conduct = body.pupils_conduct
-        existing.proprietors_report = body.proprietors_report
+        existing.proprietors_report = auto_proprietors_report
         existing.resumption_date = resumption
         existing.entered_by = current_user.id
         existing.class_id = student.class_id
@@ -140,9 +328,9 @@ def save_report(body: MontessoriIn, db: Session = Depends(get_db),
             ratings=cleaned_ratings,
             general_comment=body.general_comment,
             class_teacher_name=body.class_teacher_name,
-            class_teacher_report=body.class_teacher_report,
+            class_teacher_report=auto_teacher_report,
             pupils_conduct=body.pupils_conduct,
-            proprietors_report=body.proprietors_report,
+            proprietors_report=auto_proprietors_report,
             resumption_date=resumption,
             entered_by=current_user.id,
             status=ResultStatus.pending,
@@ -157,7 +345,7 @@ def save_report(body: MontessoriIn, db: Session = Depends(get_db),
         description=f"Saved Montessori report for {student.full_name}",
     ))
     db.commit()
-    return _out(report)
+    return _out(report, db)
 
 
 # ── Sub Admin: submit a single report for admin review ────────────
@@ -246,7 +434,8 @@ def subadmin_uploads(page: int = 1, per_page: int = 20, status: Optional[str] = 
     if term_id:  q = q.filter(MontessoriReport.term_id == term_id)
     total = q.count()
     items = q.order_by(MontessoriReport.uploaded_at.desc()).offset((page-1)*per_page).limit(per_page).all()
-    return {"items": [_out(r) for r in items], "total": total}
+    _term_cache = {}
+    return {"items": [_out(r, db, _term_cache) for r in items], "total": total}
 
 
 # ── Admin: list submitted reports awaiting review ──────────────────
@@ -274,8 +463,9 @@ def pending_reports(page: int = 1, per_page: int = 20,
     approved_count = base_query().filter(MontessoriReport.status == ResultStatus.approved).count()
     correction_count = base_query().filter(MontessoriReport.status == ResultStatus.correction_requested).count()
 
+    _term_cache = {}
     return {
-        "items": [_out(r) for r in items],
+        "items": [_out(r, db, _term_cache) for r in items],
         "total": total,
         "approved_count": approved_count,
         "correction_count": correction_count,
@@ -365,6 +555,11 @@ def publish_report(report_id: int, db: Session = Depends(get_db),
         raise HTTPException(404, "Report not found")
     if r.status == ResultStatus.locked:
         raise HTTPException(403, "Cannot publish a locked report")
+    # Defensive recompute: guarantees the published text always matches the
+    # ratings actually on file, even if some other path touched the record
+    # without going through save_report's own recompute.
+    r.class_teacher_report = _auto_class_teacher_report(r.ratings)
+    r.proprietors_report = _auto_proprietors_report(r.ratings)
     r.status = ResultStatus.published
     r.approved_by = current_user.id
     r.approved_at = datetime.now(timezone.utc)
@@ -421,7 +616,8 @@ def list_reports(student_id: Optional[int] = None, class_id: Optional[int] = Non
     if session_id: q = q.filter(MontessoriReport.session_id == session_id)
     if term_id:    q = q.filter(MontessoriReport.term_id == term_id)
     items = q.order_by(MontessoriReport.uploaded_at.desc()).all()
-    return {"items": [_out(r) for r in items]}
+    _term_cache = {}
+    return {"items": [_out(r, db, _term_cache) for r in items]}
 
 
 @router.get("/{report_id}")
@@ -430,7 +626,7 @@ def get_report(report_id: int, db: Session = Depends(get_db),
     r = db.query(MontessoriReport).filter(MontessoriReport.id == report_id).first()
     if not r:
         raise HTTPException(404, "Report not found")
-    return _out(r)
+    return _out(r, db)
 
 
 # ── Student: view own report(s) — only published ones ─────────────
@@ -446,4 +642,5 @@ def my_reports(session_id: Optional[int] = None, term_id: Optional[int] = None,
     if session_id: q = q.filter(MontessoriReport.session_id == session_id)
     if term_id:    q = q.filter(MontessoriReport.term_id == term_id)
     items = q.order_by(MontessoriReport.uploaded_at.desc()).all()
-    return {"items": [_out(r) for r in items]}
+    _term_cache = {}
+    return {"items": [_out(r, db, _term_cache) for r in items]}
