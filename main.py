@@ -26,6 +26,7 @@ Base.metadata.create_all(bind=engine)
 
 from app.scripts.fix_class_subjects import run_class_subject_fixes  # noqa
 from app.scripts.sync_kg3_subjects import sync_kg3_subjects  # noqa -- REMOVE this import after one successful deploy
+from app.scripts.list_class_subjects import list_class_subjects  # noqa -- DIAGNOSTIC ONLY, remove after checking logs
 
 # ── FastAPI app ────────────────────────────────────────────────
 app = FastAPI(
@@ -50,6 +51,7 @@ app.add_middleware(
 def _startup_data_fixes():
     run_class_subject_fixes()
     sync_kg3_subjects()  # REMOVE this line after one successful deploy (see file docstring)
+    list_class_subjects()  # DIAGNOSTIC ONLY -- prints current DB state, remove after checking logs
 
 # ── API routes ─────────────────────────────────────────────────
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
