@@ -24,6 +24,8 @@ from app.models.models import (  # noqa
 )
 Base.metadata.create_all(bind=engine)
 
+from app.scripts.fix_class_subjects import run_class_subject_fixes  # noqa
+
 # ── FastAPI app ────────────────────────────────────────────────
 app = FastAPI(
     title="Jaasiel RMS API",
@@ -41,6 +43,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── One-off data fixes (safe to leave in — no-ops after first run) ──
+@app.on_event("startup")
+def _startup_data_fixes():
+    run_class_subject_fixes()
 
 # ── API routes ─────────────────────────────────────────────────
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
