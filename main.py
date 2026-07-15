@@ -25,6 +25,7 @@ from app.models.models import (  # noqa
 Base.metadata.create_all(bind=engine)
 
 from app.scripts.fix_class_subjects import run_class_subject_fixes  # noqa
+from app.scripts.sync_kg3_subjects import sync_kg3_subjects  # noqa -- REMOVE this import after one successful deploy
 
 # ── FastAPI app ────────────────────────────────────────────────
 app = FastAPI(
@@ -48,6 +49,7 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup_data_fixes():
     run_class_subject_fixes()
+    sync_kg3_subjects()  # REMOVE this line after one successful deploy (see file docstring)
 
 # ── API routes ─────────────────────────────────────────────────
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
