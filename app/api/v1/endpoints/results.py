@@ -212,25 +212,38 @@ def upload_results(body: UploadRequest,
         first_t  = sc.first_test  if sc.first_test  is not None else None
         second_t = sc.second_test if sc.second_test is not None else None
 
-        if first_t is not None and second_t is not None:
-            ca = first_t + second_t
-        elif first_t is not None:
-            ca = first_t
-        elif sc.ca_score is not None:
-            ca = sc.ca_score
+        # A subject is genuinely BLANK only when nothing at all was entered
+        # for it. Blank must stay NULL all the way through — defaulting it
+        # to 0 here is what was causing unscored subjects to show as "F"
+        # on the report card (0 looks like a real earned score downstream).
+        is_blank = (
+            sc.first_test  is None and sc.second_test is None and
+            sc.ca_score    is None and sc.exam_score  is None and
+            sc.total_score is None
+        )
+
+        if is_blank:
+            ca = exam = total = g = r = None
         else:
-            ca = 0
+            if first_t is not None and second_t is not None:
+                ca = first_t + second_t
+            elif first_t is not None:
+                ca = first_t
+            elif sc.ca_score is not None:
+                ca = sc.ca_score
+            else:
+                ca = 0
 
-        exam  = sc.exam_score or 0
+            exam = sc.exam_score if sc.exam_score is not None else 0
 
-        # If no_test mode: teacher enters total directly (no CA breakdown)
-        if body.no_test:
-            total = sc.total_score if sc.total_score is not None else exam
-            ca    = 0
-        else:
-            total = sc.total_score if sc.total_score is not None else (ca + exam)
+            # If no_test mode: teacher enters total directly (no CA breakdown)
+            if body.no_test:
+                total = sc.total_score if sc.total_score is not None else exam
+                ca    = 0
+            else:
+                total = sc.total_score if sc.total_score is not None else (ca + exam)
 
-        g, r  = calculate_grade(total)
+            g, r = calculate_grade(total)
         existing = db.query(Result).filter(
             Result.student_id == student.id,
             Result.subject_id == subject.id,

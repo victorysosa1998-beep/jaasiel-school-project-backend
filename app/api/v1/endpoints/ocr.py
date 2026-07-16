@@ -538,15 +538,28 @@ def ocr_job_confirm(
         sid     = item.student_id or row.matched_student_id
         first_t = item.first_test  if item.first_test  is not None else None
         second_t= item.second_test if item.second_test is not None else None
-        ca      = item.ca_score    if item.ca_score    is not None else (row.ca_score or 0)
-        exam    = item.exam_score  if item.exam_score  is not None else (row.exam_score or 0)
 
         if not sid: skipped += 1; continue
 
-        # Use Jaasiel scoring formula
-        total = compute_subject_total(first_t, second_t, ca, exam, None)
-        if total is None: total = ca + exam
-        grade, remark = calculate_grade(total)
+        # A row is genuinely BLANK only when nothing was entered/extracted
+        # at all for it — don't coerce ca/exam to 0 before checking, or
+        # every blank cell silently becomes a real 0 and grades as "F".
+        is_blank = (
+            item.first_test is None and item.second_test is None and
+            item.ca_score   is None and item.exam_score  is None and
+            not row.ca_score and not row.exam_score
+        )
+
+        if is_blank:
+            ca = exam = total = grade = remark = None
+        else:
+            ca   = item.ca_score   if item.ca_score   is not None else (row.ca_score or 0)
+            exam = item.exam_score if item.exam_score is not None else (row.exam_score or 0)
+
+            # Use Jaasiel scoring formula
+            total = compute_subject_total(first_t, second_t, ca, exam, None)
+            if total is None: total = ca + exam
+            grade, remark = calculate_grade(total)
 
         existing = db.query(Result).filter(
             Result.student_id == sid,
