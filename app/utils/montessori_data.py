@@ -19,9 +19,6 @@ MONTESSORI_CLASSES = [
     "Creche",
     "Daycare",
     "Pre-Nursery",
-    "KG 1",
-    "KG 2",
-    "KG 3",
 ]
 
 
