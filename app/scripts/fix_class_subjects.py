@@ -8,10 +8,14 @@ Fixes:
   1. Adds "C.R.S" to KG 1, KG 2, KG 3
   2. Gives KG 3 every subject that "Basic 1" has
   3. Adds "Basic Science" to "Jss 1"
+  4. Creates "Business Studies" subject if it doesn't exist yet
+  5. Adds "Basic Technology" and "Business Studies" to "Jss 1"
+  6. Adds "Basic Science", "Basic Technology", "Business Studies" to "Jss 2"
 
 Safe to leave in permanently — every statement uses
-ON CONFLICT DO NOTHING, so after the first successful run it just
-does nothing on every future deploy (no duplicates, nothing deleted).
+ON CONFLICT DO NOTHING (or an equivalent NOT EXISTS check), so after
+the first successful run it just does nothing on every future deploy
+(no duplicates, nothing deleted).
 """
 
 from sqlalchemy import text
@@ -49,6 +53,36 @@ FIXES = [
         FROM classes c, subjects s
         WHERE c.name = 'Jss 1'
           AND s.name = 'Basic Science'
+        ON CONFLICT (class_id, subject_id) DO NOTHING
+        """,
+    ),
+    (
+        "Create 'Business Studies' subject if it doesn't exist",
+        """
+        INSERT INTO subjects (name, is_active, created_at)
+        SELECT 'Business Studies', TRUE, NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM subjects WHERE name = 'Business Studies')
+        """,
+    ),
+    (
+        "Add Basic Technology and Business Studies to Jss 1",
+        """
+        INSERT INTO class_subjects (class_id, subject_id)
+        SELECT c.id, s.id
+        FROM classes c, subjects s
+        WHERE c.name = 'Jss 1'
+          AND s.name IN ('Basic Technology', 'Business Studies')
+        ON CONFLICT (class_id, subject_id) DO NOTHING
+        """,
+    ),
+    (
+        "Add Basic Science, Basic Technology, Business Studies to Jss 2",
+        """
+        INSERT INTO class_subjects (class_id, subject_id)
+        SELECT c.id, s.id
+        FROM classes c, subjects s
+        WHERE c.name = 'Jss 2'
+          AND s.name IN ('Basic Science', 'Basic Technology', 'Business Studies')
         ON CONFLICT (class_id, subject_id) DO NOTHING
         """,
     ),
