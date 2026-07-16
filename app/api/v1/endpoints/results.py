@@ -9,6 +9,7 @@ Results endpoint — complete workflow:
 """
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
@@ -115,22 +116,28 @@ def upload_results(body: UploadRequest,
                    current_user: User = Depends(require_staff)):
 
     # resolve class
+    # NOTE: name-based lookup is case/whitespace-insensitive so "Jss 1",
+    # "JSS 1", and " jss 1 " all resolve to the same row instead of
+    # silently creating duplicate Class rows (see class_id-based fix in
+    # upload-history.html — this is the defensive backend counterpart).
     cls = None
     if body.class_id:
         cls = db.query(Class).filter(Class.id == body.class_id).first()
     elif body.class_name:
-        cls = db.query(Class).filter(Class.name == body.class_name).first()
+        clean_name = body.class_name.strip()
+        cls = db.query(Class).filter(func.lower(func.trim(Class.name)) == clean_name.lower()).first()
         if not cls:
-            cls = Class(name=body.class_name); db.add(cls); db.flush()
+            cls = Class(name=clean_name); db.add(cls); db.flush()
 
     # resolve subject
     subject = None
     if body.subject_id:
         subject = db.query(Subject).filter(Subject.id == body.subject_id).first()
     elif body.subject_name:
-        subject = db.query(Subject).filter(Subject.name == body.subject_name).first()
+        clean_name = body.subject_name.strip()
+        subject = db.query(Subject).filter(func.lower(func.trim(Subject.name)) == clean_name.lower()).first()
         if not subject:
-            subject = Subject(name=body.subject_name); db.add(subject); db.flush()
+            subject = Subject(name=clean_name); db.add(subject); db.flush()
 
     if not cls or not subject:
         raise HTTPException(400, "Class and subject are required")
