@@ -28,6 +28,7 @@ from app.scripts.fix_class_subjects import run_class_subject_fixes  # noqa
 from app.scripts.sync_kg3_subjects import sync_kg3_subjects  # noqa -- REMOVE this import after one successful deploy
 from app.scripts.list_class_subjects import list_class_subjects  # noqa -- DIAGNOSTIC ONLY, remove after checking logs
 from app.scripts.add_single_result import add_single_result  # noqa -- ONE-OFF, remove after running once
+from app.scripts.reset_sub_admin_password import reset_sub_admin_password  # noqa -- ONE-OFF, remove import + call below after confirming in logs
 
 # ── FastAPI app ────────────────────────────────────────────────
 app = FastAPI(
@@ -54,6 +55,7 @@ def _startup_data_fixes():
     sync_kg3_subjects()  # REMOVE this line after one successful deploy (see file docstring)
     list_class_subjects()  # DIAGNOSTIC ONLY -- prints current DB state, remove after checking logs
     add_single_result()  # ONE-OFF -- remove this line after confirming it worked in the logs
+    reset_sub_admin_password()  # ONE-OFF -- remove this line + the import above after confirming the reset in logs
 
 # ── API routes ─────────────────────────────────────────────────
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
