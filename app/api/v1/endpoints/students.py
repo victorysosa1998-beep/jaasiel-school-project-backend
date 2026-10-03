@@ -1,13 +1,15 @@
 """Students endpoint — CRUD, bulk upload, credential generation, student self-service."""
-import os, uuid
+import os, uuid, re, json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional, List
 from app.db.base import get_db
 from app.models.models import Student, Class, Result, ResultStatus, AuditLog, User, UserRole, MontessoriReport
+from app.models.models import Session as AcSession, ResultBatch, SchoolSettings
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.api.v1.deps import get_current_user, require_staff, require_admin, get_client_ip
 from app.utils.grading import generate_student_id, generate_username, generate_default_password
@@ -65,6 +67,12 @@ def list_students(
     db: Session = Depends(get_db), current_user: User = Depends(require_staff),
 ):
     q = db.query(Student).filter(Student.is_active == True)
+    # Graduates stay in the database but are hidden from the normal list;
+    # they appear only when the "Graduated" class filter is chosen.
+    if not class_name or class_name.strip().lower() != "graduated":
+        _grad = db.query(Class).filter(func.lower(Class.name) == "graduated").first()
+        if _grad:
+            q = q.filter(or_(Student.class_id.is_(None), Student.class_id != _grad.id))
     if search:
         like = f"%{search}%"
         q = q.filter(Student.full_name.ilike(like) | Student.student_id.ilike(like) | Student.username.ilike(like))
@@ -203,9 +211,12 @@ def student_my_results(
 
     # Determine next term fee for this student's class
     next_fee = None
-    if term_obj and term_obj.next_term_fee and s.class_:
+    # Use the class the results were RECORDED in, not the student's current
+    # class — after promotion, old terms must still show their original class.
+    result_class = (results[0].class_ if results and results[0].class_ else s.class_)
+    if term_obj and term_obj.next_term_fee and result_class:
         fees = term_obj.next_term_fee
-        class_name = s.class_.name or ""
+        class_name = result_class.name or ""
 
         def _normalize_class(n):
             """Lowercase + remove all spaces for fuzzy class name matching.
@@ -245,8 +256,8 @@ def student_my_results(
     return {
         "student_id": s.id,
         "full_name": s.full_name,
-        "class_name": s.class_.name if s.class_ else None,
-        "class_id": s.class_id,
+        "class_name": result_class.name if result_class else None,
+        "class_id": result_class.id if result_class else s.class_id,
         "date_of_birth": s.date_of_birth.isoformat() if s.date_of_birth else None,
         "age": age,
         "gender": s.gender.value if s.gender else None,
@@ -884,3 +895,166 @@ async def _extract_students_with_claude(image_bytes: bytes, content_type: str) -
     raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
     result = json.loads(raw)
     return result if isinstance(result, list) else []
+
+
+# ══════════════════════════════════════════════════════════════
+# END-OF-SESSION PROMOTION
+#   Moves every active student up one class. SS 3 students move to a
+#   "Graduated" class (is_active stays True; nothing is deleted).
+#   Only students.class_id changes — results, batches and Montessori
+#   reports keep the class they were recorded in.
+#   Two steps: POST /students/promote/preview (changes nothing), then
+#   POST /students/promote (applies once per session).
+# ══════════════════════════════════════════════════════════════
+PROMOTION_CHAIN = [
+    "creche", "daycare", "prenursery", "kg1", "kg2", "kg3",
+    "basic1", "basic2", "basic3", "basic4", "basic5",
+    "jss1", "jss2", "jss3", "ss1", "ss2", "ss3",
+]
+GRADUATED_CLASS_NAME = "Graduated"
+
+
+def _ckey(name):
+    """'Pre-Nursery' / 'Jss 1' / 'JSS 1' / 'Primary 3' -> comparable key."""
+    k = re.sub(r"[\s\-_]+", "", (name or "").lower())
+    if k.startswith("primary"):
+        k = "basic" + k[len("primary"):]
+    return k
+
+
+def _promotion_plan(db, exclude_ids):
+    """Builds the full plan BEFORE changing anything, so nobody is moved twice."""
+    classes = db.query(Class).order_by(Class.id).all()
+    by_key = {}
+    for c in classes:
+        by_key.setdefault(_ckey(c.name), c)
+    plan, skipped = [], []
+    for c in classes:
+        k = _ckey(c.name)
+        if k == "graduated":
+            continue
+        studs = (db.query(Student)
+                 .filter(Student.class_id == c.id, Student.is_active == True)
+                 .order_by(Student.full_name).all())
+        studs = [x for x in studs if x.id not in exclude_ids]
+        if not studs:
+            continue
+        entry = {"from_id": c.id, "from_class": c.name,
+                 "students": [{"id": x.id, "name": x.full_name} for x in studs]}
+        if k not in PROMOTION_CHAIN:
+            entry["reason"] = "Class is not in the promotion order — students left where they are"
+            skipped.append(entry)
+            continue
+        i = PROMOTION_CHAIN.index(k)
+        if i == len(PROMOTION_CHAIN) - 1:
+            entry["to_id"] = None
+            entry["to_class"] = GRADUATED_CLASS_NAME
+        else:
+            nxt = by_key.get(PROMOTION_CHAIN[i + 1])
+            if nxt is None:
+                entry["reason"] = "Next class does not exist in the database — students left where they are"
+                skipped.append(entry)
+                continue
+            entry["to_id"] = nxt.id
+            entry["to_class"] = nxt.name
+        plan.append(entry)
+    return plan, skipped
+
+
+def _current_session_or_400(db):
+    sess = db.query(AcSession).filter(AcSession.is_current == True).first()
+    if not sess:
+        raise HTTPException(400, "No current session")
+    return sess
+
+
+def _uploads_in_session(db, session_id):
+    return (db.query(ResultBatch).filter(ResultBatch.session_id == session_id).count()
+            + db.query(MontessoriReport).filter(MontessoriReport.session_id == session_id).count())
+
+
+@router.post("/promote/preview")
+def promote_preview(body: dict, db: Session = Depends(get_db),
+                    current_user: User = Depends(require_admin)):
+    """Shows exactly who would move where. Changes nothing."""
+    exclude = {int(x) for x in (body.get("exclude_student_ids") or [])}
+    sess = _current_session_or_400(db)
+    plan, skipped = _promotion_plan(db, exclude)
+    marker = db.query(SchoolSettings).filter(
+        SchoolSettings.key == f"promotion_applied_session_{sess.id}").first()
+    return {
+        "session_id": sess.id, "session_name": sess.session_name,
+        "already_promoted": bool(marker),
+        "uploads_in_session": _uploads_in_session(db, sess.id),
+        "total_students": sum(len(e["students"]) for e in plan),
+        "plan": plan, "skipped": skipped,
+    }
+
+
+@router.post("/promote")
+def promote_students(body: dict, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_admin)):
+    """Applies the promotion. Allowed ONCE per session (marker in school_settings)."""
+    sess = _current_session_or_400(db)
+    if int(body.get("confirm_session_id") or 0) != sess.id:
+        raise HTTPException(400, "Confirmation does not match the current session")
+    marker_key = f"promotion_applied_session_{sess.id}"
+    if db.query(SchoolSettings).filter(SchoolSettings.key == marker_key).first():
+        raise HTTPException(400, f"Students were already promoted for session {sess.session_name}")
+    uploads = _uploads_in_session(db, sess.id)
+    if uploads and not body.get("force"):
+        raise HTTPException(400,
+            f"{uploads} result upload(s) already exist in {sess.session_name}. "
+            "Promote BEFORE uploading new-term results.")
+
+    exclude = {int(x) for x in (body.get("exclude_student_ids") or [])}
+    plan, skipped = _promotion_plan(db, exclude)
+    if not plan:
+        raise HTTPException(400, "Nobody to promote")
+
+    results_before = db.query(Result).count()
+    try:
+        grad_class = None
+        if any(e["to_id"] is None for e in plan):
+            grad_class = db.query(Class).filter(
+                func.lower(Class.name) == GRADUATED_CLASS_NAME.lower()).first()
+            if not grad_class:
+                grad_class = Class(name=GRADUATED_CLASS_NAME, level="graduated", is_active=False)
+                db.add(grad_class)
+                db.flush()
+
+        moved, graduated, backup = 0, 0, []
+        for e in plan:
+            target_id = grad_class.id if e["to_id"] is None else e["to_id"]
+            for st in e["students"]:
+                stu = db.query(Student).filter(Student.id == st["id"]).first()
+                if not stu or stu.class_id != e["from_id"]:
+                    continue
+                backup.append([stu.id, e["from_id"], target_id])
+                stu.class_id = target_id
+                if e["to_id"] is None:
+                    graduated += 1
+                else:
+                    moved += 1
+
+        db.flush()
+        if db.query(Result).count() != results_before:
+            raise RuntimeError("Results count changed — aborting")
+
+        now = datetime.now(timezone.utc).isoformat()
+        db.add(SchoolSettings(key=f"promotion_backup_session_{sess.id}",
+                              value=json.dumps(backup)))
+        db.add(SchoolSettings(key=marker_key, value=now))
+        db.add(AuditLog(user_id=current_user.id, user_name=current_user.full_name,
+                        user_role=current_user.role.value, action="promotion",
+                        entity_type="session", entity_id=sess.id,
+                        description=f"Promoted {moved} student(s), graduated {graduated} "
+                                    f"({len(exclude)} excluded) for {sess.session_name}"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Promotion failed — nothing was changed: {e}")
+
+    return {"message": f"Promoted {moved} student(s); {graduated} graduated.",
+            "promoted": moved, "graduated": graduated,
+            "excluded": len(exclude), "skipped_classes": [x["from_class"] for x in skipped]}
