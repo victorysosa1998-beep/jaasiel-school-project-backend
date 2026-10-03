@@ -4,13 +4,18 @@ app/scripts/fix_class_subjects.py
 One-off data fix for Jaasiel RMS, meant to run automatically on
 app startup after you push to GitHub and Railway redeploys.
 
-Fixes:
-  1. Adds "C.R.S" to KG 1, KG 2, KG 3
-  2. Gives KG 3 every subject that "Basic 1" has
-  3. Adds "Basic Science" to "Jss 1"
-  4. Creates "Business Studies" subject if it doesn't exist yet
-  5. Adds "Basic Technology" and "Business Studies" to "Jss 1"
-  6. Adds "Basic Science", "Basic Technology", "Business Studies" to "Jss 2"
+Fixes (still active):
+  1. Adds "C.R.S" to KG 1 and KG 2
+  2. Creates "Business Studies" subject if it doesn't exist yet
+
+REMOVED on 2026-10 (they would undo the new subject lists on every deploy —
+see app/scripts/update_class_subjects.py):
+  - Adding "C.R.S" to KG 3
+  - Giving KG 3 every subject that "Basic 1" has
+  - Adding "Basic Science" / "Basic Technology" / "Business Studies" to
+    "Jss 1" and "Jss 2"
+Their one-time effects were already applied to the database; removing the
+code does not delete anything from the database.
 
 Safe to leave in permanently — every statement uses
 ON CONFLICT DO NOTHING (or an equivalent NOT EXISTS check), so after
@@ -24,35 +29,13 @@ from app.db.base import SessionLocal
 
 FIXES = [
     (
-        "Add C.R.S to KG 1, KG 2, KG 3",
+        "Add C.R.S to KG 1, KG 2",
         """
         INSERT INTO class_subjects (class_id, subject_id)
         SELECT c.id, s.id
         FROM classes c, subjects s
-        WHERE c.name IN ('KG 1', 'KG 2', 'KG 3')
+        WHERE c.name IN ('KG 1', 'KG 2')
           AND s.name = 'C.R.S'
-        ON CONFLICT (class_id, subject_id) DO NOTHING
-        """,
-    ),
-    (
-        "Give KG 3 every subject that Basic 1 has",
-        """
-        INSERT INTO class_subjects (class_id, subject_id)
-        SELECT (SELECT id FROM classes WHERE name = 'KG 3'), cs.subject_id
-        FROM class_subjects cs
-        JOIN classes c ON cs.class_id = c.id
-        WHERE c.name = 'Basic 1'
-        ON CONFLICT (class_id, subject_id) DO NOTHING
-        """,
-    ),
-    (
-        "Add Basic Science to Jss 1",
-        """
-        INSERT INTO class_subjects (class_id, subject_id)
-        SELECT c.id, s.id
-        FROM classes c, subjects s
-        WHERE c.name = 'Jss 1'
-          AND s.name = 'Basic Science'
         ON CONFLICT (class_id, subject_id) DO NOTHING
         """,
     ),
@@ -62,28 +45,6 @@ FIXES = [
         INSERT INTO subjects (name, is_active, created_at)
         SELECT 'Business Studies', TRUE, NOW()
         WHERE NOT EXISTS (SELECT 1 FROM subjects WHERE name = 'Business Studies')
-        """,
-    ),
-    (
-        "Add Basic Technology and Business Studies to Jss 1",
-        """
-        INSERT INTO class_subjects (class_id, subject_id)
-        SELECT c.id, s.id
-        FROM classes c, subjects s
-        WHERE c.name = 'Jss 1'
-          AND s.name IN ('Basic Technology', 'Business Studies')
-        ON CONFLICT (class_id, subject_id) DO NOTHING
-        """,
-    ),
-    (
-        "Add Basic Science, Basic Technology, Business Studies to Jss 2",
-        """
-        INSERT INTO class_subjects (class_id, subject_id)
-        SELECT c.id, s.id
-        FROM classes c, subjects s
-        WHERE c.name = 'Jss 2'
-          AND s.name IN ('Basic Science', 'Basic Technology', 'Business Studies')
-        ON CONFLICT (class_id, subject_id) DO NOTHING
         """,
     ),
 ]

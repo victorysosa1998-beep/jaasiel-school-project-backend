@@ -25,6 +25,7 @@ from app.models.models import (  # noqa
 Base.metadata.create_all(bind=engine)
 
 from app.scripts.fix_class_subjects import run_class_subject_fixes  # noqa
+from app.scripts.update_class_subjects import run_update_class_subjects  # noqa
 # NOTE: publish_kg_batches one-off fix removed — it was solving the wrong
 # problem (ResultBatch.approved_at, which nothing actually gates on). The
 # real KG 1/2/3 "not yet published" bug was in app/utils/montessori_data.py
@@ -52,6 +53,9 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup_data_fixes():
     run_class_subject_fixes()
+    # Applies the new subject lists ONLY when APPLY_SUBJECT_UPDATE=1 is set
+    # in Railway, and only once (marker in school_settings).
+    run_update_class_subjects()
 
 # ── API routes ─────────────────────────────────────────────────
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
